@@ -312,7 +312,18 @@ bool AssParser::GetStyles(std::vector<TextInfo>::iterator& line,
   }
 
   ++line;
+  StyleFormat format;
+  
+  // Find and parse Format line
+  while (line != text_.end()) {
+    if (FindTitle((*line).text, "Format:")) {
+      format = ParseFormatLine((*line).text);
+      break;
+    }
+    ++line;
+  }
 
+  // Parse Style lines using format
   for (; line != text_.end(); ++line) {
     if (FindTitle((*line).text, "[")) {
       break;
@@ -322,15 +333,20 @@ bool AssParser::GetStyles(std::vector<TextInfo>::iterator& line,
       continue;
     }
 
-    std::vector<nonstd::string_view> styles;
-    if (!ParseLine((*line).text, 10, styles)) {
+    std::vector<nonstd::string_view> style_parts;
+    if (!ParseLine((*line).text, format.num_fields, style_parts)) {
       return false;
     }
-    StyleInfo res = {(*line).line_num, (*line).text.c_str(), styles};
+
+    // Use format.field_positions to access fields in correct order
+    StyleInfo res = {
+      (*line).line_num,
+      (*line).text.c_str(),
+      MapStyleFields(style_parts, format)
+    };
     styles_.emplace_back(res);
   }
   has_style = true;
-
   return true;
 }
 
@@ -747,6 +763,32 @@ bool AssParser::CleanFonts() {
   }
 
   return true;
+}
+
+struct StyleFormat {
+    std::map<std::string, int> field_positions;
+    int num_fields;
+};
+
+StyleFormat ParseFormatLine(const std::string& format_line) {
+    StyleFormat result;
+    std::vector<nonstd::string_view> fields;
+    
+    // Split format line after "Format:" 
+    auto pos = format_line.find(':');
+    if (pos != std::string::npos) {
+        std::string fields_str = format_line.substr(pos + 1);
+        // Split by comma and trim each field
+        // Store mapping of field name to position
+        int idx = 0;
+        // Parse fields_str into fields vector
+        for (const auto& field : fields) {
+            std::string field_name = Trim(std::string(field));
+            result.field_positions[ToLower(field_name)] = idx++;
+        }
+    }
+    result.num_fields = result.field_positions.size();
+    return result;
 }
 
 }  // namespace ass
