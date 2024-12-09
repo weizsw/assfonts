@@ -116,6 +116,14 @@ class AssParser {
     std::vector<nonstd::string_view> dialogue;
   };
 
+  struct StyleFormatIndices {
+    int name_idx = 0;
+    int fontname_idx = 1;
+    int fontsize_idx = 8;
+    int bold_idx = 5;
+    int italic_idx = 9;
+  };
+
   std::shared_ptr<Logger> logger_;
 
   AString ass_path_;
@@ -127,6 +135,8 @@ class AssParser {
 
   bool has_default_style_ = false;
   bool has_fonts_ = false;
+
+  StyleFormatIndices style_format_;
 
   std::map<FontDesc, std::unordered_set<char32_t>> font_sets_;
   std::map<std::string, FontDesc> stylename_fontdesc_;
