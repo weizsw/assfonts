@@ -222,48 +222,28 @@ bool AssParser::ParseLine(const std::string& line, const unsigned int num_field,
                           std::vector<nonstd::string_view>& res) {
   nonstd::string_view word;
   auto ch = line.begin();
-  unsigned int field = 0;
 
-  auto GetWords = [&](const char delimiter) {
-    nonstd::string_view substr(&(*ch), line.end() - ch);
-    size_t pos = 0;
-    while ((pos = substr.find(delimiter)) != nonstd::string_view::npos) {
-      res.emplace_back(Trim(nonstd::string_view(&(*ch), pos)));
-
-      pos += 1;
-
-      if (delimiter == ':') {
-        ch += pos;
-        break;
-      } else if (delimiter == ',') {
-        ++field;
-
-        if (field >= num_field - 1) {
-          ch += pos;
-          break;
-        }
-      }
-
-      ch += pos;
-      substr = nonstd::string_view(&(*ch), line.end() - ch);
-    }
-  };
-
-  GetWords(':');
-  GetWords(',');
-
-  if (ch != line.end()) {
-    word = nonstd::string_view(&(*ch), line.end() - ch);
-  } else {
-    word = nonstd::string_view("");
+  // First split by colon
+  nonstd::string_view substr(&(*ch), line.end() - ch);
+  size_t colon_pos = substr.find(':');
+  if (colon_pos != nonstd::string_view::npos) {
+    res.emplace_back(Trim(nonstd::string_view(&(*ch), colon_pos)));
+    ch += colon_pos + 1;
   }
 
-  res.emplace_back(word);
-
-  if (field < num_field - 1) {
-    logger_->Error(_ST("Failed to parse \"{}\". Incorrect number of field."),
-                   ass_path_);
-    return false;
+  // Then split remaining text by commas
+  while (ch != line.end()) {
+    substr = nonstd::string_view(&(*ch), line.end() - ch);
+    size_t comma_pos = substr.find(',');
+    
+    if (comma_pos != nonstd::string_view::npos) {
+      res.emplace_back(Trim(nonstd::string_view(&(*ch), comma_pos)));
+      ch += comma_pos + 1;
+    } else {
+      // Last field
+      res.emplace_back(Trim(nonstd::string_view(&(*ch), line.end() - ch)));
+      break;
+    }
   }
 
   return true;
@@ -313,6 +293,65 @@ bool AssParser::GetStyles(std::vector<TextInfo>::iterator& line,
 
   ++line;
 
+  // Parse Format line
+  bool format_found = false;
+  std::vector<nonstd::string_view> format_fields;
+  for (; line != text_.end(); ++line) {
+    if (FindTitle((*line).text, "[")) {
+      break;
+    }
+
+    if (!FindTitle((*line).text, "Format:")) {
+      continue;
+    }
+
+    if (!ParseLine((*line).text, 0, format_fields)) {
+      return false;
+    }
+
+    // Reset indices to invalid value
+    style_format_.name_idx = -1;
+    style_format_.fontname_idx = -1;
+    style_format_.fontsize_idx = -1;
+    style_format_.bold_idx = -1;
+    style_format_.italic_idx = -1;
+
+    // Find indices for each field
+    for (size_t i = 1; i < format_fields.size(); i++) {
+      std::string field = std::string(Trim(format_fields[i]));
+      std::transform(field.begin(), field.end(), field.begin(), ::tolower);
+      
+      if (field == "name") {
+        style_format_.name_idx = i - 1;
+      } else if (field == "fontname") {
+        style_format_.fontname_idx = i - 1;
+      } else if (field == "fontsize") {
+        style_format_.fontsize_idx = i - 1;
+      } else if (field == "bold") {
+        style_format_.bold_idx = i - 1;
+      } else if (field == "italic") {
+        style_format_.italic_idx = i - 1;
+      }
+    }
+
+    // Verify all required fields are found
+    if (style_format_.name_idx == -1 || style_format_.fontname_idx == -1) {
+      logger_->Error(_ST("Failed to parse \"{}\". Missing required style fields (Name or Fontname)."),
+                     ass_path_);
+      return false;
+    }
+
+    format_found = true;
+    break;
+  }
+
+  if (!format_found) {
+    logger_->Error(_ST("Failed to parse \"{}\". No Style Format line found."),
+                   ass_path_);
+    return false;
+  }
+
+  // Parse Style lines
   for (; line != text_.end(); ++line) {
     if (FindTitle((*line).text, "[")) {
       break;
@@ -323,9 +362,17 @@ bool AssParser::GetStyles(std::vector<TextInfo>::iterator& line,
     }
 
     std::vector<nonstd::string_view> styles;
-    if (!ParseLine((*line).text, 10, styles)) {
+    if (!ParseLine((*line).text, 0, styles)) {
       return false;
     }
+
+    // Check if we have at least enough fields for Name and Fontname
+    if (styles.size() <= std::max(style_format_.name_idx + 1, style_format_.fontname_idx + 1)) {
+      logger_->Error(_ST("Failed to parse \"{}\". Style line has too few fields."),
+                     ass_path_);
+      return false;
+    }
+
     StyleInfo res = {(*line).line_num, (*line).text.c_str(), styles};
     styles_.emplace_back(res);
   }
@@ -370,23 +417,30 @@ void AssParser::set_stylename_fontdesc() {
   FontDesc empty_font_desc;
 
   for (const auto& style : styles_) {
-    if (style.style[1] == "Default") {
+    if (style.style[style_format_.name_idx + 1] == "Default") {
       has_default_style_ = true;
     }
 
-    stylename_fontdesc_[std::string(style.style[1])] = empty_font_desc;
-    nonstd::string_view fontname = style.style[2];
+    stylename_fontdesc_[std::string(style.style[style_format_.name_idx + 1])] = empty_font_desc;
+    nonstd::string_view fontname = style.style[style_format_.fontname_idx + 1];
 
     if (fontname[0] == '@') {
       fontname = fontname.substr(1);
     }
 
-    stylename_fontdesc_[std::string(style.style[1])].fontname =
+    stylename_fontdesc_[std::string(style.style[style_format_.name_idx + 1])].fontname =
         std::string(fontname);
-    stylename_fontdesc_[std::string(style.style[1])].bold =
-        CalculateBold(StringToInt(std::string(style.style[8])));
-    stylename_fontdesc_[std::string(style.style[1])].italic =
-        CalculateItalic(StringToInt(std::string(style.style[9])));
+
+    // Only set bold and italic if the fields exist in the format
+    if (style_format_.bold_idx != -1 && style.style.size() > style_format_.bold_idx + 1) {
+      stylename_fontdesc_[std::string(style.style[style_format_.name_idx + 1])].bold =
+          CalculateBold(StringToInt(std::string(style.style[style_format_.bold_idx + 1])));
+    }
+
+    if (style_format_.italic_idx != -1 && style.style.size() > style_format_.italic_idx + 1) {
+      stylename_fontdesc_[std::string(style.style[style_format_.name_idx + 1])].italic =
+          CalculateItalic(StringToInt(std::string(style.style[style_format_.italic_idx + 1])));
+    }
 
     RenameInfo rename_info = {
         style.line_num,
