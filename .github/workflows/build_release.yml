@@ -5,28 +5,37 @@ on:
     types: [ published ]
   push:
     branches: [ main ] 
-
 jobs:
   build-linux:
     runs-on: ubuntu-22.04
+    defaults:
+      run:
+        shell: bash
     strategy:
       matrix:
-        arch: [x86_64, aarch64, armhf, i686]
         include:
-          - arch: x86_64
-            profile: x64
-          - arch: aarch64
-            profile: arm64
-          - arch: armhf
-            profile: armv7l
-          - arch: i686
-            profile: x86
+          - { arch: x86_64, profile: x64 }
+          - { arch: aarch64, profile: arm64 }
+          - { arch: armhf, profile: armv7l }
+          - { arch: i686, profile: x86 }
     steps:
-      - uses: actions/checkout@v4
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@v10
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 32
+          swap-size-mb: 32
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          
+      - name: checkout
+        uses: actions/checkout@v4
         with:
           submodules: 'recursive'
         
-      - name: build binary
+      - name: build binary and appimage
         uses: addnab/docker-run-action@v3
         with:
           image: wyzdwdz/assfonts-amd64:latest
@@ -39,6 +48,15 @@ jobs:
             cmake . --preset linux-${{ matrix.profile }}
             cmake --build . --target install --preset linux-${{ matrix.profile }}-release -j
             mv ./out/install/linux-${{ matrix.profile }}/bin/assfonts assfonts-${{ github.ref_name }}-${{ matrix.arch }}-Linux
+            cp ./.github/linux/AppImageBuilder_${{ matrix.profile }}.yml AppImageBuilder.yml
+            mkdir -p ./AppDir/usr
+            cp -r ./out/install/linux-${{ matrix.profile }}/* ./AppDir/usr
+            mkdir -p ./AppDir/usr/share/icons
+            cp ./src/qt/resources/icon.png ./AppDir/usr/share/icons
+            mkdir -p ./AppDir/usr/share/applications
+            cp ./src/qt/resources/assfonts-gui.desktop ./AppDir/usr/share/applications
+            sed -i 's/!!!VERSION!!!/${{ github.ref_name }}/g' AppImageBuilder.yml
+            appimage-builder --recipe AppImageBuilder.yml --skip-tests
 
       - name: upload Linux
         uses: actions/upload-artifact@v4
@@ -53,7 +71,7 @@ jobs:
         with:
           name: linux-${{ matrix.profile }}-issue
           path: out/build/linux-${{ matrix.profile }}/vcpkg_installed/vcpkg/issue_body.md
-          
+
   release:
     runs-on: ubuntu-22.04
     defaults:
@@ -85,7 +103,7 @@ jobs:
         with:
           name: release-Linux-i686
 
-      - name: create zips
+      - name: create packages
         run: |
           sudo apt-get install -y zip
           mkdir -p ./share/doc/assfonts
@@ -98,31 +116,35 @@ jobs:
           cp ./doc/man/assfonts.1.gz ./share/man/man1/
           mkdir bin
           cp -f assfonts-${{ github.ref_name }}-x86_64-Linux ./bin/assfonts
-          chmod +x ./bin/assfonts
-          zip -r assfonts-${{ github.ref_name }}-x86_64-Linux.zip bin share LICENSE.txt NEWS.txt NOTICE.txt
-          rm -rf bin share LICENSE.txt NEWS.txt NOTICE.txt
-          
-          mkdir bin
+          cp -f assfonts-gui-${{ github.ref_name }}-x86_64-Linux.AppImage assfonts-gui.AppImage
+          tar -czvf assfonts-${{ github.ref_name }}-x86_64-Linux.tar.gz bin/assfonts assfonts-gui.AppImage ./share/doc/assfonts/LICENSE ./share/doc/assfonts/NEWS ./share/doc/assfonts/NOTICE ./share/man/man1/assfonts.1.gz
+          rm -rf assfonts-${{ github.ref_name }}-x86_64-Linux assfonts-gui-${{ github.ref_name }}-x86_64-Linux.AppImage
           cp -f assfonts-${{ github.ref_name }}-aarch64-Linux ./bin/assfonts
-          chmod +x ./bin/assfonts
-          zip -r assfonts-${{ github.ref_name }}-aarch64-Linux.zip bin share LICENSE.txt NEWS.txt NOTICE.txt
-          rm -rf bin share LICENSE.txt NEWS.txt NOTICE.txt
-          
-          mkdir bin
+          cp -f assfonts-gui-${{ github.ref_name }}-aarch64-Linux.AppImage assfonts-gui.AppImage
+          tar -czvf assfonts-${{ github.ref_name }}-aarch64-Linux.tar.gz bin/assfonts assfonts-gui.AppImage ./share/doc/assfonts/LICENSE ./share/doc/assfonts/NEWS ./share/doc/assfonts/NOTICE ./share/man/man1/assfonts.1.gz
+          rm -rf assfonts-${{ github.ref_name }}-aarch64-Linux assfonts-gui-${{ github.ref_name }}-aarch64-Linux.AppImage
           cp -f assfonts-${{ github.ref_name }}-armhf-Linux ./bin/assfonts
-          chmod +x ./bin/assfonts
-          zip -r assfonts-${{ github.ref_name }}-armhf-Linux.zip bin share LICENSE.txt NEWS.txt NOTICE.txt
-          rm -rf bin share LICENSE.txt NEWS.txt NOTICE.txt
-          
-          mkdir bin
+          cp -f assfonts-gui-${{ github.ref_name }}-armhf-Linux.AppImage assfonts-gui.AppImage
+          tar -czvf assfonts-${{ github.ref_name }}-armhf-Linux.tar.gz bin/assfonts assfonts-gui.AppImage ./share/doc/assfonts/LICENSE ./share/doc/assfonts/NEWS ./share/doc/assfonts/NOTICE ./share/man/man1/assfonts.1.gz
+          rm -rf assfonts-${{ github.ref_name }}-armhf-Linux assfonts-gui-${{ github.ref_name }}-armhf-Linux.AppImage
           cp -f assfonts-${{ github.ref_name }}-i686-Linux ./bin/assfonts
-          chmod +x ./bin/assfonts
-          zip -r assfonts-${{ github.ref_name }}-i686-Linux.zip bin share LICENSE.txt NEWS.txt NOTICE.txt
-          rm -rf bin share LICENSE.txt NEWS.txt NOTICE.txt
+          cp -f assfonts-gui-${{ github.ref_name }}-i686-Linux.AppImage assfonts-gui.AppImage
+          tar -czvf assfonts-${{ github.ref_name }}-i686-Linux.tar.gz bin/assfonts assfonts-gui.AppImage ./share/doc/assfonts/LICENSE ./share/doc/assfonts/NEWS ./share/doc/assfonts/NOTICE ./share/man/man1/assfonts.1.gz
+          rm -rf assfonts-${{ github.ref_name }}-i686-Linux assfonts-gui-${{ github.ref_name }}-i686-Linux.AppImage
 
-      - name: upload release
-        uses: softprops/action-gh-release@v1
+      - name: calculate hash
+        run: |
+          sha256sum assfonts-${{ github.ref_name }}-x86_64-Linux.tar.gz > assfonts-${{ github.ref_name }}-x86_64-Linux.tar.gz.sha256sum
+          sha256sum assfonts-${{ github.ref_name }}-aarch64-Linux.tar.gz > assfonts-${{ github.ref_name }}-aarch64-Linux.tar.gz.sha256sum
+          sha256sum assfonts-${{ github.ref_name }}-armhf-Linux.tar.gz > assfonts-${{ github.ref_name }}-armhf-Linux.tar.gz.sha256sum
+          sha256sum assfonts-${{ github.ref_name }}-i686-Linux.tar.gz > assfonts-${{ github.ref_name }}-i686-Linux.tar.gz.sha256sum
+
+      - name: edit release
+        uses: svenstaro/upload-release-action@v2
         with:
-          files: |
-            assfonts-${{ github.ref_name }}-*-Linux*
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: assfonts-*${{ github.ref_name }}-*
+          tag: ${{ github.ref }}
+          overwrite: false
+          file_glob: true
           
